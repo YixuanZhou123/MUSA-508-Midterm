@@ -13,6 +13,7 @@ knitr::opts_chunk$set(echo = TRUE)
 # Load some libraries
 
 library(tidyverse)
+library(tidycensus)
 library(sf)
 library(spdep)
 library(caret)
@@ -51,44 +52,73 @@ The in-class exercise at the end encourages students to modify the existing code
 
 See if you can change the chunk options to get rid of the text outputs
 
+```{r load_key, warning = FALSE, eval = FALSE}
+census_api_key("5c7b1ebb206012789759942ddf1acbb882f937ad", overwrite = TRUE)
+```
+
+```{r acs_vars}
+acs_vars <- c("B01001_001E", # ACS total Pop estimate
+              "B25002_001E", # Estimate of total housing units
+              "B25002_003E", # Number of vacant housing units
+              "B19013_001E", # Median HH Income ($)
+              "B02001_002E", # People describing themselves as "white alone"
+              "B06009_006E") # Total graduate or professional degree
+```
+
+```{r get_acs_2020, cache = TRUE, message = FALSE, warning = FALSE}
+acsTractsPHL.2020 <- get_acs(geography = "tract",
+                             year = 2020, 
+                             variables = acs_vars, 
+                             geometry = TRUE, 
+                             state = "PA", 
+                             county = "Philadelphia", 
+                             output = "wide") %>%
+                            st_transform('ESRI:102729')
+```
+
+
+
 ```{r read_data}
 
 nhoods <- 
   st_read("E:/Downloads/studentData.geojson") %>%
-  st_transform('ESRI:102286')
+  st_transform('ESRI:102729')
+
 to_predict <-
   nhoods %>%
-  dplyr::filter(toPredict == 'CHALLENGE')
+  dplyr::filter(toPredict == 'CHALLENGE') #Select data for later prediction
 
-boston <- 
-  read.csv(file.path(root.dir,"/Chapter3_4/bostonHousePriceData_clean.csv"))
-
-boston.sf <- 
-  boston %>% 
-  st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326, agr = "constant") %>%
-  st_transform('ESRI:102286')
+#??
+#Philadelphia <- 
+ # read.csv(file.path(root.dir,"/Chapter3_4/bostonHousePriceData_clean.csv"))
 
 
-bostonCrimes <- read.csv(file.path(root.dir,"/Chapter3_4/bostonCrimes.csv"))
+# Load crime data
+philadelphiCrimes <- read.csv('E:/Downloads/Philadelphia_crime.csv') 
 
+# Create sf and select Weapon Violations
+philadelphiCrimes.sf <-
+  philadelphiCrimes %>%
+  filter(text_general_code == "Weapon Violations",
+  lat > -1) %>%
+  dplyr::select(lat, lng) %>%
+  na.omit() %>%
+  st_as_sf(coords = c( "lng","lat"), crs = "EPSG:4326") %>%
+  st_transform('ESRI:102729') %>%
+  distinct()
+
+
+
+
+# Load 311 data
+philadelphia311 <- read.csv('E:/Downloads/public_cases_fc.csv') %>%
+  dplyr::select(lat, lon) %>%
+  na.omit() %>%
+  st_as_sf(coords = c("lon", "lat"), crs = 4326, agr = "constant") %>%
+  st_transform('ESRI:102729')
 ```
 
-### Exploratory data analysis
 
-```{r EDA}
-
-# finding counts by group
-bostonCrimes %>% 
-group_by(OFFENSE_CODE_GROUP) %>%
-  summarize(count = n()) %>%
-  arrange(-count) %>% top_n(10) %>%
-  kable() %>%
-  kable_styling()
-```
-
-### Mapping 
-
-See if you can alter the size of the image output. Search for adjusting figure height and width for a rmarkdown block
 
 ```{r price_map}
 # ggplot, reorder
@@ -105,26 +135,6 @@ ggplot() +
   mapTheme()
 ```
 
-### Cleaning Crime Data
-
-Let's filter for only a particular type of offense, Aggravated Assault.
-
-We turn it from data frame into sf using `st_as_sf` and then keep only distinct observations.
-
-Why are we using a filter for `Lat > -1`?
-
-```{r clean_crime}
-bostonCrimes.sf <-
-  bostonCrimes %>%
-    filter(OFFENSE_CODE_GROUP == "Aggravated Assault",
-           Lat > -1) %>%
-    dplyr::select(Lat, Long) %>%
-    na.omit() %>%
-    st_as_sf(coords = c("Long", "Lat"), crs = "EPSG:4326") %>%
-    st_transform('ESRI:102286') %>%
-    distinct()
-
-```
 
 ### Create Nearest Spatial Features
 This is where we do two important things:
@@ -150,41 +160,41 @@ The number `k` in the `nn_function()` function is the number of neighbors to to 
 ```{r Features}
 
 # Counts of crime per buffer of house sale
-boston.sf$crimes.Buffer <- boston.sf %>% 
+nhoods$crimes.Buffer <- nhoods %>% 
     st_buffer(660) %>% 
-    aggregate(mutate(bostonCrimes.sf, counter = 1),., sum) %>%
+    aggregate(mutate(philadelphiCrimes.sf, counter = 1),., sum) %>%
     pull(counter)
 
 ## Nearest Neighbor Feature
 
-boston.sf <-
-  boston.sf %>% 
+nhoods <-
+  nhoods %>% 
     mutate(
-      crime_nn1 = nn_function(st_coordinates(boston.sf), 
-                              st_coordinates(bostonCrimes.sf), k = 1),
+      crime_nn1 = nn_function(st_coordinates(nhoods), 
+                              st_coordinates(philadelphiCrimes.sf), k = 1),
       
-      crime_nn2 = nn_function(st_coordinates(boston.sf), 
-                              st_coordinates(bostonCrimes.sf), k = 2), 
+      crime_nn2 = nn_function(st_coordinates(nhoods), 
+                              st_coordinates(philadelphiCrimes.sf), k = 2), 
       
-      crime_nn3 = nn_function(st_coordinates(boston.sf), 
-                              st_coordinates(bostonCrimes.sf), k = 3), 
+      crime_nn3 = nn_function(st_coordinates(nhoods), 
+                              st_coordinates(philadelphiCrimes.sf), k = 3), 
       
-      crime_nn4 = nn_function(st_coordinates(boston.sf), 
-                              st_coordinates(bostonCrimes.sf), k = 4), 
+      crime_nn4 = nn_function(st_coordinates(nhoods), 
+                              st_coordinates(philadelphiCrimes.sf), k = 4), 
       
-      crime_nn5 = nn_function(st_coordinates(boston.sf), 
-                              st_coordinates(bostonCrimes.sf), k = 5)) 
+      crime_nn5 = nn_function(st_coordinates(nhoods), 
+                              st_coordinates(philadelphiCrimes.sf), k = 5)) 
 ```
 
 ```{r assault density}
 ## Plot assault density
-ggplot() + geom_sf(data = nhoods, fill = "grey40") +
-  stat_density2d(data = data.frame(st_coordinates(bostonCrimes.sf)), 
+ggplot() + geom_sf(data = acsTractsPHL.2020, fill = "grey40") +
+  stat_density2d(data = data.frame(st_coordinates(philadelphiCrimes.sf)), 
                  aes(X, Y, fill = ..level.., alpha = ..level..),
                  size = 0.01, bins = 40, geom = 'polygon') +
   scale_fill_gradient(low = "#25CB10", high = "#FA7800", name = "Density") +
   scale_alpha(range = c(0.00, 0.35), guide = "none") +
-  labs(title = "Density of Aggravated Assaults, Boston") +
+  labs(title = "Density of WA, PHL") +
   mapTheme()
 ```
 
