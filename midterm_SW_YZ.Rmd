@@ -94,7 +94,7 @@ to_predict <-
 
 
 # Load crime data
-philadelphiCrimes <- read.csv('E:/Downloads/Philadelphia_crime.csv') 
+philadelphiCrimes <- read.csv('https://raw.githubusercontent.com/ObjQIAN/MUSA-508-Midterm/main/data/Philadelphia_crime.csv') 
 
 # Create sf and select Weapon Violations
 philadelphiCrimes.sf <-
@@ -111,11 +111,14 @@ philadelphiCrimes.sf <-
 
 
 # Load 311 data
-philadelphia311 <- read.csv('E:/Downloads/public_cases_fc.csv') %>%
+philadelphia311 <- read.csv('https://phl.carto.com/api/v2/sql?filename=public_cases_fc&format=csv&skipfields=cartodb_id,the_geom,the_geom_webmercator&q=SELECT%20*%20FROM%20public_cases_fc%20WHERE%20requested_datetime%20%3E=%20%272022-01-01%27%20AND%20requested_datetime%20%3C%20%272023-01-01%27') %>%
   dplyr::select(lat, lon) %>%
   na.omit() %>%
   st_as_sf(coords = c("lon", "lat"), crs = 4326, agr = "constant") %>%
   st_transform('ESRI:102729')
+
+
+
 ```
 
 
@@ -125,13 +128,13 @@ philadelphia311 <- read.csv('E:/Downloads/public_cases_fc.csv') %>%
 
 # Mapping data
 ggplot() +
-  geom_sf(data = nhoods, fill = "grey40") +
-  geom_sf(data = boston.sf, aes(colour = q5(PricePerSq)), 
-          show.legend = "point", size = .75) +
+  geom_sf(data = acsTractsPHL.2020, fill = "grey40") +
+  geom_sf(data = nhoods, aes(colour = q5(sale_price)), 
+          show.legend = "point", size = .35) +
   scale_colour_manual(values = palette5,
-                   labels=qBr(boston,"PricePerSq"),
+                   labels=qBr(nhoods,"sale_price"),
                    name="Quintile\nBreaks") +
-  labs(title="Price Per Square Foot, Boston") +
+  labs(title="House Sale Price, Philadelphia") +
   mapTheme()
 ```
 
@@ -250,7 +253,7 @@ Some things to notice in this code; we use `select_if()` to select only the feat
 
 ```{r correlation_matrix}
 numericVars <- 
-  select_if(st_drop_geometry(boston.sf), is.numeric) %>% na.omit()
+  select_if(st_drop_geometry(nhoods), is.numeric) %>% na.omit()
 
 ggcorrplot(
   round(cor(numericVars), 1), 
@@ -260,11 +263,12 @@ ggcorrplot(
   insig = "blank") +  
     labs(title = "Correlation across numeric variables") 
 
+#有无穷或遗漏值？
 # yet another way to plot the correlation plot using the corrr library
-numericVars %>% 
-  correlate() %>% 
-  autoplot() +
-  geom_text(aes(label = round(r,digits=2)),size = 2)
+#numericVars %>% 
+#  correlate() %>% 
+#  autoplot() +
+#  geom_text(aes(label = round(r,digits=2)),size = 2)
 
 ```
 
