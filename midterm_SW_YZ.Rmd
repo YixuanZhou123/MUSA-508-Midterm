@@ -149,7 +149,7 @@ These are primary tools we use to add the local spatial signal to each of the po
 
 #### Buffer aggregate
 
-The first code in this block buffers each point in `boston.sf` by `660` ft and then uses `aggregate` to count the number of `bostonCrimes.sf` points within that buffer. There is a nested call to `mutate` to assign a value of `1` for each `bostonCrimes.sf` as under a column called `counter`. This allows each crime to have the same weight in when the `sun` function is called, but other weighting schemes could be used. Finally, the code `pull` pulls the aggregate values so they can be assigned as the `crimes.Buffer` column to `boston.sf`. This is a little different from how you had assigned new columns before (usually using `mutate`), but valid. Your new feature `crimes.Buffer` is a count of all the crimes within 660ft of each reported crime. Why would it be god to know this when building a model?  
+The first code in this block buffers each point in `nhoods` by `660` ft and then uses `aggregate` to count the number of `bostonCrimes.sf` points within that buffer. There is a nested call to `mutate` to assign a value of `1` for each `bostonCrimes.sf` as under a column called `counter`. This allows each crime to have the same weight in when the `sun` function is called, but other weighting schemes could be used. Finally, the code `pull` pulls the aggregate values so they can be assigned as the `crimes.Buffer` column to `nhoods`. This is a little different from how you had assigned new columns before (usually using `mutate`), but valid. Your new feature `crimes.Buffer` is a count of all the crimes within 660ft of each reported crime. Why would it be god to know this when building a model?  
 
 
 #### k nearest neighbor (knn)
@@ -214,12 +214,12 @@ Can you give me a one-sentence description of what the takeaway is?
 ```{r Correlation}
 
 ## Home Features cor
-st_drop_geometry(boston.sf) %>% 
-  mutate(Age = 2015 - YR_BUILT) %>%
-  dplyr::select(SalePrice, LivingArea, Age, GROSS_AREA) %>%
-  filter(SalePrice <= 1000000, Age < 500) %>%
-  gather(Variable, Value, -SalePrice) %>% 
-   ggplot(aes(Value, SalePrice)) +
+st_drop_geometry(nhoods) %>% 
+  mutate(Age = 2022 - year_built) %>%
+  dplyr::select(sale_price, total_livable_area, Age, crimes.Buffer) %>%
+  filter(sale_price <= 1000000, Age < 500) %>%
+  gather(Variable, Value, -sale_price) %>% 
+   ggplot(aes(Value, sale_price)) +
      geom_point(size = .5) + geom_smooth(method = "lm", se=F, colour = "#FA7800") +
      facet_wrap(~Variable, ncol = 3, scales = "free") +
      labs(title = "Price as a function of continuous variables") +
@@ -230,13 +230,13 @@ Can we resize this somehow to make it look better?
 
 ```{r crime_corr}
 ## Crime cor
-boston.sf %>%
+nhoods %>%
   st_drop_geometry() %>%
-  mutate(Age = 2015 - YR_BUILT) %>%
-  dplyr::select(SalePrice, starts_with("crime_")) %>%
-  filter(SalePrice <= 1000000) %>%
-  gather(Variable, Value, -SalePrice) %>% 
-   ggplot(aes(Value, SalePrice)) +
+  mutate(Age = 2022 - year_built) %>%
+  dplyr::select(sale_price, starts_with("crime_")) %>%
+  filter(sale_price <= 1000000) %>%
+  gather(Variable, Value, -sale_price) %>% 
+   ggplot(aes(Value, sale_price)) +
      geom_point(size = .5) + geom_smooth(method = "lm", se=F, colour = "#FA7800") +
      facet_wrap(~Variable, nrow = 1, scales = "free") +
      labs(title = "Price as a function of continuous variables") +
@@ -283,16 +283,16 @@ Pearson's r Learning links:
 Note: the use of the `ggscatter()` function from the `ggpubr` package to plot the *Pearson's rho* or *Pearson's r* statistic; the Correlation Coefficient. This number can also be squared and represented as `r2`. However, this differs from the `R^2` or `R2` or "R-squared" of a linear model fit, known as the Coefficient of Determination. This is explained a bit more below.
 
 ```{r uni_variate_Regression}
-boston_sub_200k <- st_drop_geometry(boston.sf) %>% 
-filter(SalePrice <= 2000000) 
+philly_sub_200k <- st_drop_geometry(nhoods) %>% 
+filter(sale_price <= 2000000) 
 
-cor.test(boston_sub_200k$LivingArea,
-         boston_sub_200k$SalePrice, 
+cor.test(philly_sub_200k$total_livable_area,
+         philly_sub_200k$sale_price, 
          method = "pearson")
 
-ggscatter(boston_sub_200k,
-          x = "LivingArea",
-          y = "SalePrice",
+ggscatter(philly_sub_200k,
+          x = "total_livable_area",
+          y = "sale_price",
           add = "reg.line") +
   stat_cor(label.y = 2500000) 
 
@@ -320,13 +320,13 @@ Can somebody interpret the coefficient?
 Note: Here we use `ggscatter` with the `..rr.label` argument to show the `R2` Coefficient of Determination.
 
 ```{r simple_reg}
-livingReg <- lm(SalePrice ~ LivingArea, data = boston_sub_200k)
+livingReg <- lm(sale_price ~ total_livable_area, data = philly_sub_200k)
 
 summary(livingReg)
 
-ggscatter(boston_sub_200k,
-          x = "LivingArea",
-          y = "SalePrice",
+ggscatter(philly_sub_200k,
+          x = "total_livable_area",
+          y = "sale_price",
           add = "reg.line") +
   stat_cor(aes(label = paste(..rr.label.., ..p.label.., sep = "~`,`~")), label.y = 2500000) +
   stat_regline_equation(label.y = 2250000) 
@@ -340,13 +340,13 @@ Make a prediction using the coefficient, intercept etc.,
 ```{r calculate prediction}
 coefficients(livingReg)
 
-new_LivingArea = 4000
+new_total_livable_area = 4000
 
 # "by hand"
-378370.01571  + 88.34939 * new_LivingArea
+378370.01571  + 88.34939 * new_total_livable_area
 
 # predict() function
-predict(livingReg, newdata = data.frame(LivingArea = 4000))
+predict(livingReg, newdata = data.frame(total_livable_area = 4000))
 ```
 
 
@@ -358,12 +358,13 @@ What's up with these categorical variables?
 
 Better R-squared - does that mean it's a better model?
 
-```{r mutlivariate_regression}
-reg1 <- lm(SalePrice ~ ., data = boston_sub_200k %>% 
-                                 dplyr::select(SalePrice, LivingArea, Style, 
-                                               GROSS_AREA, R_TOTAL_RM, NUM_FLOORS,
+off_street_open, R_TOTAL_RM, NUM_FLOORS,
                                                R_BDRMS, R_FULL_BTH, R_HALF_BTH, 
-                                               R_KITCH, R_AC, R_FPLACE))
+                                               R_KITCH, R_AC, R_FPLACE
+
+```{r mutlivariate_regression}
+reg1 <- lm(sale_price ~ ., data = philly_sub_200k %>% 
+                                 dplyr::select(sale_price, total_livable_area))
 
 summary(reg1)
 ```
@@ -391,9 +392,9 @@ plot_summs(reg1, livingReg)
 
 Challenges:
 
--What is the Coefficient of LivingArea when Average Distance to 2-nearest crimes are considered?
+-What is the Coefficient of total_livable_area when Average Distance to 2-nearest crimes are considered?
 
--Build a regression with LivingArea and crime_nn2? Report the regression coefficient for LivingArea. Is it different than it was before? Why?
+-Build a regression with total_livable_area and crime_nn2? Report the regression coefficient for total_livable_area. Is it different than it was before? Why?
 
 - Try to engineer a 'fixed effect' out of the other variables in an attempt to parameterize a variable that suggests a big or fancy house or levels of fanciness. How does this affect your model?
 
