@@ -24,6 +24,9 @@ library(gridExtra)
 library(ggcorrplot) # plot correlation plot
 library(corrr)      # another way to plot correlation plot
 library(kableExtra)
+library(broom)
+library(tufte)
+library(rmarkdown)
 library(jtools)     # for regression model plots
 library(ggstance) # to support jtools plots
 library(ggpubr)    # plotting R^2 value on ggplot point scatter
@@ -90,7 +93,7 @@ to_predict <-
 
 #??
 #Philadelphia <- 
- # read.csv(file.path(root.dir,"/Chapter3_4/bostonHousePriceData_clean.csv"))
+ # read.csv(file.path(root.dir,"/Chapter3_4/phillyHousePriceData_clean.csv"))
 
 
 # Load crime data
@@ -149,7 +152,7 @@ These are primary tools we use to add the local spatial signal to each of the po
 
 #### Buffer aggregate
 
-The first code in this block buffers each point in `nhoods` by `660` ft and then uses `aggregate` to count the number of `bostonCrimes.sf` points within that buffer. There is a nested call to `mutate` to assign a value of `1` for each `bostonCrimes.sf` as under a column called `counter`. This allows each crime to have the same weight in when the `sun` function is called, but other weighting schemes could be used. Finally, the code `pull` pulls the aggregate values so they can be assigned as the `crimes.Buffer` column to `nhoods`. This is a little different from how you had assigned new columns before (usually using `mutate`), but valid. Your new feature `crimes.Buffer` is a count of all the crimes within 660ft of each reported crime. Why would it be god to know this when building a model?  
+The first code in this block buffers each point in `nhoods` by `660` ft and then uses `aggregate` to count the number of `phillyCrimes.sf` points within that buffer. There is a nested call to `mutate` to assign a value of `1` for each `phillyCrimes.sf` as under a column called `counter`. This allows each crime to have the same weight in when the `sun` function is called, but other weighting schemes could be used. Finally, the code `pull` pulls the aggregate values so they can be assigned as the `crimes.Buffer` column to `nhoods`. This is a little different from how you had assigned new columns before (usually using `mutate`), but valid. Your new feature `crimes.Buffer` is a count of all the crimes within 660ft of each reported crime. Why would it be god to know this when building a model?  
 
 
 #### k nearest neighbor (knn)
@@ -167,6 +170,7 @@ nhoods$crimes.Buffer <- nhoods %>%
     st_buffer(660) %>% 
     aggregate(mutate(philadelphiCrimes.sf, counter = 1),., sum) %>%
     pull(counter)
+
 
 ## Nearest Neighbor Feature
 
@@ -400,5 +404,103 @@ Challenges:
 
 ```{r}
 
+
+```
+
+
+
+
+## Split Data into Train/Test Set
+```{r}
+
+inTrain <- createDataPartition(
+              y = paste(nhoods$building_code_description, nhoods$quality_grade), 
+              p = .60, list = FALSE)
+philly.training <- nhoods[inTrain,] 
+philly.test <- nhoods[-inTrain,]  
+ 
+reg.training <- 
+  lm(sale_price ~ ., data = as.data.frame(philly.training) %>% 
+                             dplyr::select(sale_price,crimes.Buffer,))
+
+philly.test <-
+  philly.test %>%
+  mutate(Regression = "Baseline Regression",
+         sale_price.Predict = predict(reg.training, philly.test),
+         sale_price.Error = sale_price.Predict - sale_price,
+         sale_price.AbsError = abs(sale_price.Predict - sale_price),
+         sale_price.APE = (abs(sale_price.Predict - sale_price)) / sale_price.Predict)%>%
+  filter(sale_price < 5000000) 
+
+```
+
+```{r}
+# Remove invalid predictions (Maybe need to do this before running the test)
+philly.test <-  philly.test[!with(philly.test,is.na(sale_price.Predict)),]
+```
+## Spatial Lags
+
+What is the relationship between errors? Are they clustered? Is the error of a single observation correlated with the error of nearby observations?
+
+We create a list of "neigbhors" using a "spatial weights matrix".
+
+```{r}
+coords <- st_coordinates(nhoods) 
+
+neighborList <- knn2nb(knearneigh(coords, 5))
+
+spatialWeights <- nb2listw(neighborList, style="W")
+
+nhoods$lagPrice <- lag.listw(spatialWeights, nhoods$sale_price)
+
+```
+
+
+```{r}
+coords.test <-  st_coordinates(philly.test) 
+
+neighborList.test <- knn2nb(knearneigh(coords.test, 5))
+
+spatialWeights.test <- nb2listw(neighborList.test, style="W")
+ 
+philly.test %>% 
+  mutate(lagPriceError = lag.listw(spatialWeights.test, sale_price.Error)) %>%
+  ggplot()+
+  geom_point(aes(x =lagPriceError, y =sale_price.Error))
+
+```
+
+## Do Errors Cluster? Using Moran's I
+
+So - is your Moran's I statistic indicating dispersion (-1), randomness (0) or clustering (1)?
+
+
+```{r}
+moranTest <- moran.mc(philly.test$sale_price.Error, 
+                      spatialWeights.test, nsim = 999)
+
+ggplot(as.data.frame(moranTest$res[c(1:999)]), aes(moranTest$res[c(1:999)])) +
+  geom_histogram(binwidth = 0.01) +
+  geom_vline(aes(xintercept = moranTest$statistic), colour = "#FA7800",size=1) +
+  scale_x_continuous(limits = c(-1, 1)) +
+  labs(title="Observed and permuted Moran's I",
+       subtitle= "Observed Moran's I in orange",
+       x="Moran's I",
+       y="Count") +
+  plotTheme()
+
+```
+
+## Predictions by neighborhood
+
+```{r}
+philly.test %>%
+as.data.frame() %>%
+# Tract is not a good factor here
+  group_by(census_tract) %>%
+    summarize(meanPrediction = mean(sale_price.Predict),
+              meanPrice = mean(sale_price)) %>%
+      kable() %>% 
+  kable_styling()
 
 ```
