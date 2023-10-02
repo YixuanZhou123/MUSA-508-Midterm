@@ -79,17 +79,19 @@ acsTractsPHL.2020 <- get_acs(geography = "tract",
                             st_transform('ESRI:102729')
 ```
 
-
-
 ```{r read_data}
 
 nhoods <- 
-  st_read("E:/Downloads/studentData.geojson") %>%
+  st_read("D:/Upenn/23fall/MUSA5080 Public Policy Analysis/midterm 4-5/studentData.geojson") %>%
   st_transform('ESRI:102729')
 
 to_predict <-
   nhoods %>%
   dplyr::filter(toPredict == 'CHALLENGE') #Select data for later prediction
+
+to_train <-
+  nhoods %>%
+  dplyr::filter(toPredict == 'MODELLING') #Select data for training Model
 
 #??
 #Philadelphia <- 
@@ -132,10 +134,10 @@ philadelphia311 <- read.csv('https://phl.carto.com/api/v2/sql?filename=public_ca
 # Mapping data
 ggplot() +
   geom_sf(data = acsTractsPHL.2020, fill = "grey40") +
-  geom_sf(data = nhoods, aes(colour = q5(sale_price)), 
+  geom_sf(data = to_train, aes(colour = q5(sale_price)), 
           show.legend = "point", size = .35) +
   scale_colour_manual(values = palette5,
-                   labels=qBr(nhoods,"sale_price"),
+                   labels=qBr(to_train,"sale_price"),
                    name="Quintile\nBreaks") +
   labs(title="House Sale Price, Philadelphia") +
   mapTheme()
@@ -166,7 +168,7 @@ The number `k` in the `nn_function()` function is the number of neighbors to to 
 ```{r Features}
 
 # Counts of crime per buffer of house sale
-nhoods$crimes.Buffer <- nhoods %>% 
+to_train$crimes.Buffer <- to_train %>% 
     st_buffer(660) %>% 
     aggregate(mutate(philadelphiCrimes.sf, counter = 1),., sum) %>%
     pull(counter)
@@ -174,22 +176,22 @@ nhoods$crimes.Buffer <- nhoods %>%
 
 ## Nearest Neighbor Feature
 
-nhoods <-
-  nhoods %>% 
+to_train <-
+  to_train %>% 
     mutate(
-      crime_nn1 = nn_function(st_coordinates(nhoods), 
+      crime_nn1 = nn_function(st_coordinates(to_train), 
                               st_coordinates(philadelphiCrimes.sf), k = 1),
       
-      crime_nn2 = nn_function(st_coordinates(nhoods), 
+      crime_nn2 = nn_function(st_coordinates(to_train), 
                               st_coordinates(philadelphiCrimes.sf), k = 2), 
       
-      crime_nn3 = nn_function(st_coordinates(nhoods), 
+      crime_nn3 = nn_function(st_coordinates(to_train), 
                               st_coordinates(philadelphiCrimes.sf), k = 3), 
       
-      crime_nn4 = nn_function(st_coordinates(nhoods), 
+      crime_nn4 = nn_function(st_coordinates(to_train), 
                               st_coordinates(philadelphiCrimes.sf), k = 4), 
       
-      crime_nn5 = nn_function(st_coordinates(nhoods), 
+      crime_nn5 = nn_function(st_coordinates(to_train), 
                               st_coordinates(philadelphiCrimes.sf), k = 5)) 
 ```
 
@@ -214,37 +216,71 @@ Can somebody walk me through what they do?
 
 Can you give me a one-sentence description of what the takeaway is?
 
-
 ```{r Correlation}
 
 ## Home Features cor
-st_drop_geometry(nhoods) %>% 
+st_drop_geometry(to_train) %>% 
   mutate(Age = 2022 - year_built) %>%
   dplyr::select(sale_price, total_livable_area, Age, crimes.Buffer) %>%
-  filter(sale_price <= 1000000, Age < 500) %>%
+  filter(sale_price <= 1000000, Age < 500, total_livable_area <10000) %>%
   gather(Variable, Value, -sale_price) %>% 
    ggplot(aes(Value, sale_price)) +
-     geom_point(size = .5) + geom_smooth(method = "lm", se=F, colour = "#FA7800") +
+     geom_point(size = .5) + 
+    geom_smooth(data = . %>% filter(sale_price >0), method = "lm", se=F, colour = "#FA7800") +
      facet_wrap(~Variable, ncol = 3, scales = "free") +
      labs(title = "Price as a function of continuous variables") +
      plotTheme()
 ```
 
+#定性变量的分类需要考虑（style等）
+to_train %>% 
+  dplyr::select(sale_price, Style, OWN_OCC, NUM_FLOORS) %>%
+  mutate(NUM_FLOORS = as.factor(NUM_FLOORS)) %>%
+  filter(SalePrice <= 1000000) %>%
+  gather(Variable, Value, -SalePrice) %>% 
+   ggplot(aes(Value, SalePrice)) +
+     geom_bar(position = "dodge", stat = "summary", fun.y = "mean") +
+     facet_wrap(~Variable, ncol = 1, scales = "free") +
+     labs(title = "Price as a function of\ncategorical variables", y = "Mean_Price") +
+     plotTheme() + theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
 Can we resize this somehow to make it look better?
 
 ```{r crime_corr}
 ## Crime cor
-nhoods %>%
+to_train %>%
   st_drop_geometry() %>%
   mutate(Age = 2022 - year_built) %>%
   dplyr::select(sale_price, starts_with("crime_")) %>%
   filter(sale_price <= 1000000) %>%
   gather(Variable, Value, -sale_price) %>% 
    ggplot(aes(Value, sale_price)) +
-     geom_point(size = .5) + geom_smooth(method = "lm", se=F, colour = "#FA7800") +
+     geom_point(size = .5) + 
+     geom_smooth(data = . %>% filter(sale_price > 0), method = "lm", se=F, colour = "#FA7800") +
      facet_wrap(~Variable, nrow = 1, scales = "free") +
      labs(title = "Price as a function of continuous variables") +
      plotTheme()
+```
+```{r}
+# the result above is too similar, So we calculate and compare the R^2 to choose which crime data to use.
+# The result shows that crime_nn3 is the best one.
+
+Crime1Reg <- lm(sale_price ~ crime_nn1, data = philly_sub_200k)
+summary(Crime1Reg)
+
+Crime2Reg <- lm(sale_price ~ crime_nn2, data = philly_sub_200k)
+summary(Crime2Reg)
+
+Crime3Reg <- lm(sale_price ~ crime_nn3, data = philly_sub_200k)
+summary(Crime3Reg)
+
+Crime4Reg <- lm(sale_price ~ crime_nn4, data = philly_sub_200k)
+summary(Crime4Reg)
+
+Crime5Reg <- lm(sale_price ~ crime_nn5, data = philly_sub_200k)
+summary(Crime5Reg)
+
 ```
 
 ## Correlation matrix
@@ -257,7 +293,7 @@ Some things to notice in this code; we use `select_if()` to select only the feat
 
 ```{r correlation_matrix}
 numericVars <- 
-  select_if(st_drop_geometry(nhoods), is.numeric) %>% na.omit()
+  select_if(st_drop_geometry(to_train), is.numeric) %>% na.omit()
 
 ggcorrplot(
   round(cor(numericVars), 1), 
@@ -266,6 +302,7 @@ ggcorrplot(
   type="lower",
   insig = "blank") +  
     labs(title = "Correlation across numeric variables") 
+
 
 #有无穷或遗漏值？
 # yet another way to plot the correlation plot using the corrr library
@@ -287,8 +324,8 @@ Pearson's r Learning links:
 Note: the use of the `ggscatter()` function from the `ggpubr` package to plot the *Pearson's rho* or *Pearson's r* statistic; the Correlation Coefficient. This number can also be squared and represented as `r2`. However, this differs from the `R^2` or `R2` or "R-squared" of a linear model fit, known as the Coefficient of Determination. This is explained a bit more below.
 
 ```{r uni_variate_Regression}
-philly_sub_200k <- st_drop_geometry(nhoods) %>% 
-filter(sale_price <= 2000000) 
+philly_sub_200k <- st_drop_geometry(to_train) %>% 
+filter(sale_price <= 2000000, total_livable_area < 10000, total_livable_area > 0) 
 
 cor.test(philly_sub_200k$total_livable_area,
          philly_sub_200k$sale_price, 
@@ -347,7 +384,7 @@ coefficients(livingReg)
 new_total_livable_area = 4000
 
 # "by hand"
-378370.01571  + 88.34939 * new_total_livable_area
+-41433.9841  + 88.34939 * new_total_livable_area
 
 # predict() function
 predict(livingReg, newdata = data.frame(total_livable_area = 4000))
@@ -368,9 +405,10 @@ off_street_open, R_TOTAL_RM, NUM_FLOORS,
 
 ```{r mutlivariate_regression}
 reg1 <- lm(sale_price ~ ., data = philly_sub_200k %>% 
-                                 dplyr::select(sale_price, total_livable_area))
+                                 dplyr::select(sale_price, total_livable_area, crime_nn3 ))
 
 summary(reg1)
+
 ```
 
 ## Marginal Response Plots
@@ -383,7 +421,7 @@ What does the location of the blue circle relative to the center line at zero su
 
 ```{r effect_plots}
 ## Plot of marginal response
-effect_plot(reg1, pred = R_BDRMS, interval = TRUE, plot.points = TRUE)
+effect_plot(reg1, pred = total_livable_area, interval = TRUE, plot.points = TRUE)
 
 ## Plot coefficients
 plot_summs(reg1, scale = TRUE)
@@ -414,14 +452,14 @@ Challenges:
 ```{r}
 
 inTrain <- createDataPartition(
-              y = paste(nhoods$building_code_description, nhoods$quality_grade), 
+              y = paste(to_train$building_code_description, to_train$quality_grade), 
               p = .60, list = FALSE)
-philly.training <- nhoods[inTrain,] 
-philly.test <- nhoods[-inTrain,]  
+philly.training <- to_train[inTrain,] 
+philly.test <- to_train[-inTrain,]  
  
 reg.training <- 
   lm(sale_price ~ ., data = as.data.frame(philly.training) %>% 
-                             dplyr::select(sale_price,crimes.Buffer,))
+                             dplyr::select(sale_price, total_livable_area, crimes.Buffer))
 
 philly.test <-
   philly.test %>%
@@ -445,13 +483,13 @@ What is the relationship between errors? Are they clustered? Is the error of a s
 We create a list of "neigbhors" using a "spatial weights matrix".
 
 ```{r}
-coords <- st_coordinates(nhoods) 
+coords <- st_coordinates(philly.test) 
 
 neighborList <- knn2nb(knearneigh(coords, 5))
 
 spatialWeights <- nb2listw(neighborList, style="W")
 
-nhoods$lagPrice <- lag.listw(spatialWeights, nhoods$sale_price)
+philly.test$lagPrice <- lag.listw(spatialWeights, philly.test$sale_price)
 
 ```
 
@@ -462,11 +500,22 @@ coords.test <-  st_coordinates(philly.test)
 neighborList.test <- knn2nb(knearneigh(coords.test, 5))
 
 spatialWeights.test <- nb2listw(neighborList.test, style="W")
- 
+
+
+ggplot() +
+  geom_point(data = philly.test, aes(x = lagPrice, y = sale_price), size = 2) +
+  geom_smooth(data = philly.test, aes(x = lagPrice, y = sale_price), method = "lm", se = F, colour = "#FA7800") +
+  labs(title = "Price as a function of the spatial lag of price",
+       x = "Spatial Lag of Price (Mean price of 5 nearest neighbors)",
+       y = "Sale Price")
+
 philly.test %>% 
   mutate(lagPriceError = lag.listw(spatialWeights.test, sale_price.Error)) %>%
   ggplot()+
-  geom_point(aes(x =lagPriceError, y =sale_price.Error))
+  geom_point(aes(x =lagPriceError, y =sale_price.Error)) +
+  geom_smooth(aes(x = lagPriceError, y = sale_price.Error),method = "lm", se=F, colour = "#FA7800") +
+  labs(title = "Error as a function of the spatial lag of price",
+       x = "Spatial Lag of Error (Mean error of 5 nearest neighbors)", y = "Sale Price") 
 
 ```
 
@@ -503,4 +552,127 @@ as.data.frame() %>%
       kable() %>% 
   kable_styling()
 
+```
+
+## Regression with neighborhood effects
+
+Let's try to run the regression again, but this time with a neighborhood fixed effect
+
+```{r}
+reg.nhood <- lm(sale_price ~ ., data = as.data.frame(philly.training) %>% 
+                                 dplyr::select(census_tract, sale_price,
+                                              total_livable_area, crimes.Buffer))
+
+philly.test.nhood <-
+  philly.test %>%
+  mutate(Regression = "Neighborhood Effects",
+         sale_price.Predict = predict(reg.nhood, philly.test),
+         sale_price.Error = sale_price.Predict- sale_price,
+         sale_price.AbsError = abs(sale_price.Predict- sale_price),
+         sale_price.APE = (abs(sale_price.Predict- sale_price)) / sale_price)%>%
+  filter(sale_price < 5000000)
+
+```
+
+How do these models compare? We can bind our error info together and then examine!
+
+```{r}
+bothRegressions <- 
+  rbind(
+    dplyr::select(philly.test, starts_with("sale_price"), Regression, census_tract) %>%
+      mutate(lagPriceError = lag.listw(spatialWeights.test, sale_price.Error)),
+    dplyr::select(philly.test.nhood, starts_with("sale_price"), Regression, census_tract) %>%
+      mutate(lagPriceError = lag.listw(spatialWeights.test, sale_price.Error)))  
+
+```
+
+Why do these values differ from those in the book?
+
+```{r}
+st_drop_geometry(bothRegressions) %>%
+  gather(Variable, Value, -Regression, -census_tract) %>%
+  filter(Variable == "sale_price.AbsError" | Variable == "sale_price.APE") %>%
+  group_by(Regression, Variable) %>%
+    summarize(meanValue = mean(Value, na.rm = T)) %>%
+    spread(Variable, meanValue) %>%
+    kable()
+```
+
+## Further examination of errors
+
+Predicted versus observed plots - what does it mean if the line is above or below y=x?
+
+```{r}
+bothRegressions %>%
+  dplyr::select(sale_price.Predict, sale_price, Regression) %>%
+    ggplot(aes(sale_price, sale_price.Predict)) +
+  geom_point() +
+  stat_smooth(aes(sale_price, sale_price.Predict), 
+             method = "lm", se = FALSE, size = 1, colour="#FA7800") + 
+  stat_smooth(aes(sale_price.Predict, sale_price), 
+              method = "lm", se = FALSE, size = 1, colour="#25CB10") +
+  facet_wrap(~Regression) +
+  labs(title="Predicted sale price as a function of observed price",
+       subtitle="Orange line represents a perfect prediction; Green line represents prediction") +
+  plotTheme()
+
+```
+
+We can also examine the spatial pattern of errors.
+
+```{r}
+st_drop_geometry(bothRegressions) %>%
+  group_by(Regression, sale_price) %>%
+  summarize(mean.MAPE = mean(sale_price.APE, na.rm = TRUE), .groups = "drop") %>%
+  ungroup() %>%
+  left_join(philly.test, by = c(#有问题"Name" = "neighborhood")) %>%
+  st_sf() %>%
+  ggplot() + 
+  geom_sf(aes(fill = mean.MAPE)) +
+  geom_sf(data = bothRegressions, colour = "black", size = 0.5) +
+  facet_wrap(~Regression) +
+  scale_fill_gradient(low = palette5[1], high = palette5[5],
+                      name = "MAPE") +
+  labs(title = "Mean test set MAPE by neighborhood") +
+  mapTheme()
+
+```
+
+## Race and income context of predictions
+
+What is the race and income context of Boston census tracts, and how does this relate to our model performance?
+
+```{r}
+tracts20 <- 
+  get_acs(geography = "tract", variables = c("B25026_001E","B02001_002E","B19013_001E"), 
+          year=2020, state=42, county=101, geometry=TRUE, output="wide") %>%
+  st_transform('ESRI:102729') %>% 
+  rename(TotalPop = B25026_001E,
+         NumberWhites =B02001_002E,
+         Median_Income = B19013_001E) %>%
+  mutate(percentWhite = NumberWhites / TotalPop,
+         raceContext = ifelse(percentWhite > .5, "Majority White", "Majority Non-White"),
+         incomeContext = ifelse(Median_Income > 32322, "High Income", "Low Income"))
+  
+grid.arrange(ncol = 2,
+  ggplot() + geom_sf(data = na.omit(tracts20), aes(fill = raceContext)) +
+    scale_fill_manual(values = c("#25CB10", "#FA7800"), name="Race Context") +
+    labs(title = "Race Context") +
+    mapTheme() + theme(legend.position="bottom"), 
+  ggplot() + geom_sf(data = na.omit(tracts20), aes(fill = incomeContext)) +
+    scale_fill_manual(values = c("#25CB10", "#FA7800"), name="Income Context") +
+    labs(title = "Income Context") +
+    mapTheme() + theme(legend.position="bottom"))
+
+```
+
+
+```{r}
+st_join(bothRegressions, tracts17) %>% 
+  filter(!is.na(incomeContext)) %>%
+  group_by(Regression, incomeContext) %>%
+  summarize(mean.MAPE = scales::percent(mean(SalePrice.APE, na.rm = T))) %>%
+  st_drop_geometry() %>%
+  spread(incomeContext, mean.MAPE) %>%
+  kable(caption = "Test set MAPE by neighborhood income context")
 ```
