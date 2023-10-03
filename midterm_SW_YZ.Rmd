@@ -4,6 +4,12 @@ author: "Harris, Fichman, and Steif - 2022/23"
 output: html_document
 ---
 
+# 1 Introduction
+
+# 2 Data Wrangling
+
+## 2.1 Set up
+
 ```{r setup, include=FALSE}
 
 # You can set some global options for knitting chunks
@@ -40,20 +46,7 @@ source("https://raw.githubusercontent.com/urbanSpatial/Public-Policy-Analytics-L
 palette5 <- c("#25CB10", "#5AB60C", "#8FA108",   "#C48C04", "#FA7800")
 ```
 
-# MUSA 508, Lab 4 - Spatial Machine Learning Pt. 1
-
-The learning objectives of this lab are:
-
-*   Review Topics: loading data, {dplyr}, mapping and plotting with {ggplot2}
-*   New: Understanding how we created spatial indicators with K-Nearest Neighbor and the `nn_function()` function
-*   Simple correlation and the Pearson's r - Correlation Coefficient
-*   Linear Regression model goodness-of-fit and R2 - Coefficient of Determination
-
-The in-class exercise at the end encourages students to modify the existing code to create a different regression and interpret it. Finally, there is a prompt to create a new feature and add it to the regression.
-
-## Data Wrangling
-
-See if you can change the chunk options to get rid of the text outputs
+## 2.2 Data Collection
 
 ```{r load_key, warning = FALSE, eval = FALSE}
 census_api_key("5c7b1ebb206012789759942ddf1acbb882f937ad", overwrite = TRUE)
@@ -112,21 +105,14 @@ philadelphiCrimes.sf <-
   st_transform('ESRI:102729') %>%
   distinct()
 
-
-
-
 # Load 311 data
-philadelphia311 <- read.csv('https://phl.carto.com/api/v2/sql?filename=public_cases_fc&format=csv&skipfields=cartodb_id,the_geom,the_geom_webmercator&q=SELECT%20*%20FROM%20public_cases_fc%20WHERE%20requested_datetime%20%3E=%20%272022-01-01%27%20AND%20requested_datetime%20%3C%20%272023-01-01%27') %>%
+philadelphia311.sf <- read.csv('https://phl.carto.com/api/v2/sql?filename=public_cases_fc&format=csv&skipfields=cartodb_id,the_geom,the_geom_webmercator&q=SELECT%20*%20FROM%20public_cases_fc%20WHERE%20requested_datetime%20%3E=%20%272022-01-01%27%20AND%20requested_datetime%20%3C%20%272023-01-01%27') %>%
   dplyr::select(lat, lon) %>%
   na.omit() %>%
   st_as_sf(coords = c("lon", "lat"), crs = 4326, agr = "constant") %>%
   st_transform('ESRI:102729')
 
-
-
 ```
-
-
 
 ```{r price_map}
 # ggplot, reorder
@@ -143,27 +129,9 @@ ggplot() +
   mapTheme()
 ```
 
+## 2.3 Create Nearest Spatial Features
 
-### Create Nearest Spatial Features
-This is where we do two important things:
-
-*   aggregate values within a buffer, and 
-*   create  `nearest neighbor` features. 
-
-These are primary tools we use to add the local spatial signal to each of the points/rows/observations we are modeling. 
-
-#### Buffer aggregate
-
-The first code in this block buffers each point in `nhoods` by `660` ft and then uses `aggregate` to count the number of `phillyCrimes.sf` points within that buffer. There is a nested call to `mutate` to assign a value of `1` for each `phillyCrimes.sf` as under a column called `counter`. This allows each crime to have the same weight in when the `sun` function is called, but other weighting schemes could be used. Finally, the code `pull` pulls the aggregate values so they can be assigned as the `crimes.Buffer` column to `nhoods`. This is a little different from how you had assigned new columns before (usually using `mutate`), but valid. Your new feature `crimes.Buffer` is a count of all the crimes within 660ft of each reported crime. Why would it be god to know this when building a model?  
-
-
-#### k nearest neighbor (knn)
-
-The second block of code is using knn for averaging or summing values of a set number of (referred to as `k`) the nearest observations to each observation; it's *nearest neighbors*. With this, the model can understand the magnitude of values that are *near* each point. This adds a spatial signal to the model. 
-
-<!-- The function `nn_function()` takes two pairs of **coordinates** form two `sf` **point** objects. You will see the use of `st_c()` which is just a shorthand way to get the coordinates with the `st_coordinates()` function. You can see where `st_c()` is created. Using `st_c()` within `mutate` converts the points to longitude/latitude coordinate pairs for the `nn_function()` to work with. If you put *polygon* features in there, it will error. Instead you can use `st_c(st_centroid(YourPolygonSfObject))` to get nearest neighbors to a polygon centroid. -->
-
-The number `k` in the `nn_function()` function is the number of neighbors to to values from that are then averaged. Different types of crime (or anything else you measure) will require different values of `k`. *You will have to think about this!*. What could be the importance of `k` when you are making knn features for a violent crime versus and nuisance crime?
+### 2.3.1 Crime Data Set
 
 ```{r Features}
 
@@ -207,7 +175,51 @@ ggplot() + geom_sf(data = acsTractsPHL.2020, fill = "grey40") +
   mapTheme()
 ```
 
-## Analyzing associations
+### 2.3.2 311 Data Set
+
+```{r Features}
+
+# Counts of 311 per buffer of house sale
+to_train$philly311.Buffer <- to_train %>% 
+    st_buffer(660) %>% 
+    aggregate(mutate(philadelphia311.sf, counter = 1),., sum) %>%
+    pull(counter)
+
+
+## Nearest Neighbor Feature
+
+to_train <-
+  to_train %>% 
+    mutate(
+      p311_nn1 = nn_function(st_coordinates(to_train), 
+                              st_coordinates(philadelphia311.sf), k = 1),
+      
+      p311_nn2 = nn_function(st_coordinates(to_train), 
+                              st_coordinates(philadelphia311.sf), k = 2), 
+      
+      p311_nn3 = nn_function(st_coordinates(to_train), 
+                              st_coordinates(philadelphia311.sf), k = 3), 
+      
+      p311_nn4 = nn_function(st_coordinates(to_train), 
+                              st_coordinates(philadelphia311.sf), k = 4), 
+      
+      p311_nn5 = nn_function(st_coordinates(to_train), 
+                              st_coordinates(philadelphia311.sf), k = 5)) 
+```
+
+```{r 311 density}
+## Plot 311 density-????
+ggplot() + geom_sf(data = acsTractsPHL.2020, fill = "grey40") +
+  stat_density2d(data = data.frame(st_coordinates(philadelphia311.sf)), 
+                 aes(X, Y, fill = ..level.., alpha = ..level..),
+                 size = 0.01, bins = 40, geom = 'polygon') +
+  scale_fill_gradient(low = "#25CB10", high = "#FA7800", name = "Density") +
+  scale_alpha(range = c(0.1, 0.35), guide = "none") +
+  labs(title = "Density of 311, PHL") +
+  mapTheme()
+```
+
+# 3 Analyzing Associations
 
 Run these code blocks...
 Notice the use of `st_drop_geometry()`, this is the correct way to go from a `sf` spatial dataframe to a regular dataframe with no spatial component.
@@ -216,38 +228,10 @@ Can somebody walk me through what they do?
 
 Can you give me a one-sentence description of what the takeaway is?
 
-```{r Correlation}
+## 3.1 Sale Price as a Function of Numeric Features
 
-## Home Features cor
-st_drop_geometry(to_train) %>% 
-  mutate(Age = 2022 - year_built) %>%
-  dplyr::select(sale_price, total_livable_area, Age, crimes.Buffer) %>%
-  filter(sale_price <= 1000000, Age < 500, total_livable_area <10000) %>%
-  gather(Variable, Value, -sale_price) %>% 
-   ggplot(aes(Value, sale_price)) +
-     geom_point(size = .5) + 
-    geom_smooth(data = . %>% filter(sale_price >0), method = "lm", se=F, colour = "#FA7800") +
-     facet_wrap(~Variable, ncol = 3, scales = "free") +
-     labs(title = "Price as a function of continuous variables") +
-     plotTheme()
-```
+```{r}
 
-#定性变量的分类需要考虑（style等）
-to_train %>% 
-  dplyr::select(sale_price, Style, OWN_OCC, NUM_FLOORS) %>%
-  mutate(NUM_FLOORS = as.factor(NUM_FLOORS)) %>%
-  filter(SalePrice <= 1000000) %>%
-  gather(Variable, Value, -SalePrice) %>% 
-   ggplot(aes(Value, SalePrice)) +
-     geom_bar(position = "dodge", stat = "summary", fun.y = "mean") +
-     facet_wrap(~Variable, ncol = 1, scales = "free") +
-     labs(title = "Price as a function of\ncategorical variables", y = "Mean_Price") +
-     plotTheme() + theme(axis.text.x = element_text(angle = 45, hjust = 1))
-
-
-Can we resize this somehow to make it look better?
-
-```{r crime_corr}
 ## Crime cor
 to_train %>%
   st_drop_geometry() %>%
@@ -261,10 +245,15 @@ to_train %>%
      facet_wrap(~Variable, nrow = 1, scales = "free") +
      labs(title = "Price as a function of continuous variables") +
      plotTheme()
+
 ```
+The result shown in the plot above is too similar, so we calculate and compare the R^2 to choose which crime data to use.
+The result shows that crime_nn3 is the best one (Adjusted R-squared:  0.1118).
 ```{r}
 # the result above is too similar, So we calculate and compare the R^2 to choose which crime data to use.
 # The result shows that crime_nn3 is the best one.
+philly_sub_200k <- st_drop_geometry(to_train) %>% 
+filter(sale_price <= 2000000, total_livable_area < 10000, total_livable_area > 0) 
 
 Crime1Reg <- lm(sale_price ~ crime_nn1, data = philly_sub_200k)
 summary(Crime1Reg)
@@ -283,13 +272,144 @@ summary(Crime5Reg)
 
 ```
 
-## Correlation matrix
+We use the scatter plot to initially determine whether the following Numeric Features are suitable as our variables. As can be seen from the chart below, some of the features that may be useful are: `Age`, `crime_nn3`, `depth`, `frontage`, `philly311.Buffer`, `total_livable_area`.
+(若结果拟合度不足可以考虑继续添加)
 
-A correlation matrix gives us the pairwise correlation of each set of features in our data. It is usually advisable to include the target/outcome variable in this so we can understand which features are related to it.
+```{r Correlation}
 
-Some things to notice in this code; we use `select_if()` to select only the features that are numeric. This is really handy when you don't want to type or hard-code the names of your features; `ggcorrplot()` is a function from the `ggcorrplot` package.
+## Home Features cor
+st_drop_geometry(to_train) %>% 
+  mutate(Age = 2022 - year_built) %>%
+  dplyr::select(sale_price, total_livable_area, Age, crime_nn3, 
+                depth, frontage, off_street_open, philly311.Buffer) %>%
+  filter(sale_price <= 1000000, Age < 500, total_livable_area <10000, depth < 600, frontage < 500) %>%
+  gather(Variable, Value, -sale_price) %>% 
+   ggplot(aes(Value, sale_price)) +
+     geom_point(size = .5) + 
+    geom_smooth(data = . %>% filter(sale_price >0), method = "lm", se=F, colour = "#FA7800") +
+     facet_wrap(~Variable, ncol = 3, scales = "free") +
+     labs(title = "Price as a function of continuous variables") +
+     plotTheme()
 
-**Let's take a few minutes to interpret this**
+```
+
+## 3.2 Sale Price as a Function of Categorical Features
+
+We use the histograms to initially determine whether the following categorical features are suitable as our variables. As can be seen from the chart below, some of the features that may be useful are: `exterior_condition`, `fireplaces`, `interior_condition`, `number_of_bathrooms`, `number_of_bedrooms`, `number_stories`.
+(若结果拟合度不足可以考虑继续添加)
+
+```{r}
+
+#这里的代码我不知道要怎么合并一下好
+
+to_train %>%
+  dplyr::select(sale_price, exterior_condition) %>%
+  mutate(exterior_condition = as.factor(exterior_condition)) %>%
+  filter(sale_price <= 1000000) %>%
+  group_by(exterior_condition) %>%
+  summarize(avg_sale_price = mean(sale_price)) %>%
+  ggplot(aes(x = exterior_condition, y = avg_sale_price)) +
+    geom_bar(stat = "identity") +
+    labs(
+      title = "Average Sale Price by Exterior Condition",
+      y = "Average Sale Price"
+    ) +
+    plotTheme() + 
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+to_train %>%
+  dplyr::select(sale_price, fireplaces) %>%
+  mutate(fireplaces = as.factor(fireplaces)) %>%
+  filter(sale_price <= 1000000) %>%
+  filter(!is.na(fireplaces)) %>%
+  group_by(fireplaces) %>%
+  summarize(avg_sale_price = mean(sale_price)) %>%
+  ggplot(aes(x = fireplaces, y = avg_sale_price)) +
+    geom_bar(stat = "identity") +
+    labs(
+      title = "Average Sale Price by Exterior Condition",
+      y = "Average Sale Price"
+    ) +
+    plotTheme() + 
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+to_train %>%
+  dplyr::select(sale_price, interior_condition) %>%
+  mutate(interior_condition = as.factor(interior_condition)) %>%
+  filter(sale_price <= 1000000) %>%
+  filter(!is.na(interior_condition)) %>%
+  group_by(interior_condition) %>%
+  summarize(avg_sale_price = mean(sale_price)) %>%
+  ggplot(aes(x = interior_condition, y = avg_sale_price)) +
+    geom_bar(stat = "identity") +
+    labs(
+      title = "Average Sale Price by Exterior Condition",
+      y = "Average Sale Price"
+    ) +
+    plotTheme() + 
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+to_train %>%
+  dplyr::select(sale_price, number_of_bathrooms) %>%
+  mutate(number_of_bathrooms = as.factor(number_of_bathrooms)) %>%
+  filter(sale_price <= 1000000) %>%
+  filter(!is.na(number_of_bathrooms)) %>%
+  group_by(number_of_bathrooms) %>%
+  summarize(avg_sale_price = mean(sale_price)) %>%
+  ggplot(aes(x = number_of_bathrooms, y = avg_sale_price)) +
+    geom_bar(stat = "identity") +
+    labs(
+      title = "Average Sale Price by Exterior Condition",
+      y = "Average Sale Price"
+    ) +
+    plotTheme() + 
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+to_train %>%
+  dplyr::select(sale_price, number_of_bedrooms) %>%
+  mutate(number_of_bedrooms = as.factor(number_of_bedrooms)) %>%
+  filter(sale_price <= 1000000) %>%
+  filter(!is.na(number_of_bedrooms)) %>%
+  group_by(number_of_bedrooms) %>%
+  summarize(avg_sale_price = mean(sale_price)) %>%
+  ggplot(aes(x = number_of_bedrooms, y = avg_sale_price)) +
+    geom_bar(stat = "identity") +
+    labs(
+      title = "Average Sale Price by Exterior Condition",
+      y = "Average Sale Price"
+    ) +
+    plotTheme() + 
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+to_train %>%
+  dplyr::select(sale_price, number_stories) %>%
+  mutate(number_stories = as.factor(number_stories)) %>%
+  filter(sale_price <= 1000000) %>%
+  filter(!is.na(number_stories)) %>%
+  group_by(number_stories) %>%
+  summarize(avg_sale_price = mean(sale_price)) %>%
+  ggplot(aes(x = number_stories, y = avg_sale_price)) +
+    geom_bar(stat = "identity") +
+    labs(
+      title = "Average Sale Price by Exterior Condition",
+      y = "Average Sale Price"
+    ) +
+    plotTheme() + 
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+## 3.3 Select Variables
+
+In order to prevent the selected features from having too strong correlations between them and affecting the regression results, we use a correlation matrix to provide us with pairwise correlations for each set of features in the data, and use Pearson's r - Correlation Coefficient to Look at the contribution of each variable. 
+
+### 3.3.1  Correlation matrix
+
+The correlation matrix reveals a notable association between `exterior_condition` and `interior_condition`. Upon closer examination, it becomes evident that `interior_condition` offers a more robust explanation for fluctuations in `sale_price` (R-squared for `exterior` = 0.168, R-squared for `interior` = 0.1699). 
+
+Furthermore, `Total_livable_area` demonstrates a substantial correlation with both `frontage` and `depth`. Our choice to include `Total_livable_area` is substantiated by the steepness of the regression line observed in the scatterplot.
+
+To encapsulate, the chosen numeric features encompass `Age`, `crime_nn3`, `philly311.Buffer`, `total_livable_area`, while the selected categorical features comprise `fireplaces`, `interior_condition`, `number_of_bathrooms`, `number_of_bedrooms`, and `number_stories`.
 
 ```{r correlation_matrix}
 numericVars <- 
@@ -312,20 +432,19 @@ ggcorrplot(
 #  geom_text(aes(label = round(r,digits=2)),size = 2)
 
 ```
+```{r}
 
-# Univarite correlation -> multi-variate OLS regression
+ex_Reg <- lm(sale_price ~ exterior_condition, data = philly_sub_200k)
+summary(ex_Reg)
 
-### Pearson's r - Correlation Coefficient
+in_Reg <- lm(sale_price ~ interior_condition, data = philly_sub_200k)
+summary(in_Reg)
 
-Pearson's r Learning links:
-*   [Pearson Correlation Coefficient (r) | Guide & Examples](https://www.scribbr.com/statistics/pearson-correlation-coefficient/)
-*   [Correlation Test Between Two Variables in R](http://www.sthda.com/english/wiki/correlation-test-between-two-variables-in-r)
+```
 
-Note: the use of the `ggscatter()` function from the `ggpubr` package to plot the *Pearson's rho* or *Pearson's r* statistic; the Correlation Coefficient. This number can also be squared and represented as `r2`. However, this differs from the `R^2` or `R2` or "R-squared" of a linear model fit, known as the Coefficient of Determination. This is explained a bit more below.
+### 3.3.2 Univarite correlation with Pearson's r - Correlation Coefficient
 
 ```{r uni_variate_Regression}
-philly_sub_200k <- st_drop_geometry(to_train) %>% 
-filter(sale_price <= 2000000, total_livable_area < 10000, total_livable_area > 0) 
 
 cor.test(philly_sub_200k$total_livable_area,
          philly_sub_200k$sale_price, 
@@ -338,13 +457,6 @@ ggscatter(philly_sub_200k,
   stat_cor(label.y = 2500000) 
 
 ```
-
-
-The Pearson's rho - Correlation Coefficient and the R2 Coefficient of Determination are **very** frequently confused! It is a really common mistake, so take a moment to understand what they are and how they differ. [This blog](https://towardsdatascience.com/r%C2%B2-or-r%C2%B2-when-to-use-what-4968eee68ed3) is a good explanation. In summary:
-
-*   The `r` is a measure the degree of relationship between two variables say x and y. It can go between -1 and 1.  1 indicates that the two variables are moving in unison.
-
-*   However, `R2` shows percentage variation in y which is explained by all the x variables together. Higher the better. It is always between 0 and 1. It can never be negative – since it is a squared value.
 
 ## Univarite Regression
 
@@ -371,6 +483,7 @@ ggscatter(philly_sub_200k,
           add = "reg.line") +
   stat_cor(aes(label = paste(..rr.label.., ..p.label.., sep = "~`,`~")), label.y = 2500000) +
   stat_regline_equation(label.y = 2250000) 
+
 ```
 
 
@@ -388,24 +501,17 @@ new_total_livable_area = 4000
 
 # predict() function
 predict(livingReg, newdata = data.frame(total_livable_area = 4000))
+
 ```
 
 
-## Multivariate Regression
+# 4 Multivariate OLS Regression
 
-Let's take a look at this regression - how are we creating it?
-
-What's up with these categorical variables?
-
-Better R-squared - does that mean it's a better model?
-
-off_street_open, R_TOTAL_RM, NUM_FLOORS,
-                                               R_BDRMS, R_FULL_BTH, R_HALF_BTH, 
-                                               R_KITCH, R_AC, R_FPLACE
 
 ```{r mutlivariate_regression}
 reg1 <- lm(sale_price ~ ., data = philly_sub_200k %>% 
-                                 dplyr::select(sale_price, total_livable_area, crime_nn3 ))
+                                 dplyr::select(sale_price, total_livable_area, crime_nn3, philly311.Buffer, 
+                                               fireplaces, interior_condition, number_of_bathrooms, number_of_bedrooms, number_stories))
 
 summary(reg1)
 
@@ -476,7 +582,7 @@ philly.test <-
 # Remove invalid predictions (Maybe need to do this before running the test)
 philly.test <-  philly.test[!with(philly.test,is.na(sale_price.Predict)),]
 ```
-## Spatial Lags
+## 5 Spatial Lags
 
 What is the relationship between errors? Are they clustered? Is the error of a single observation correlated with the error of nearby observations?
 
@@ -662,7 +768,8 @@ grid.arrange(ncol = 2,
   ggplot() + geom_sf(data = na.omit(tracts20), aes(fill = incomeContext)) +
     scale_fill_manual(values = c("#25CB10", "#FA7800"), name="Income Context") +
     labs(title = "Income Context") +
-    mapTheme() + theme(legend.position="bottom"))
+    mapTheme() + 
+    theme(legend.position="bottom"))
 
 ```
 
