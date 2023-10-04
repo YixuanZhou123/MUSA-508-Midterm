@@ -252,6 +252,9 @@ The result shows that crime_nn3 is the best one (Adjusted R-squared:  0.1118).
 ```{r}
 # the result above is too similar, So we calculate and compare the R^2 to choose which crime data to use.
 # The result shows that crime_nn3 is the best one.
+to_train <- to_train %>%
+  mutate(Age = 2022 - year_built) 
+
 philly_sub_200k <- st_drop_geometry(to_train) %>% 
 filter(sale_price <= 2000000, total_livable_area < 10000, total_livable_area > 0) 
 
@@ -278,8 +281,8 @@ We use the scatter plot to initially determine whether the following Numeric Fea
 ```{r Correlation}
 
 ## Home Features cor
+
 st_drop_geometry(to_train) %>% 
-  mutate(Age = 2022 - year_built) %>%
   dplyr::select(sale_price, total_livable_area, Age, crime_nn3, 
                 depth, frontage, off_street_open, philly311.Buffer) %>%
   filter(sale_price <= 1000000, Age < 500, total_livable_area <10000, depth < 600, frontage < 500) %>%
@@ -450,27 +453,11 @@ cor.test(philly_sub_200k$total_livable_area,
          philly_sub_200k$sale_price, 
          method = "pearson")
 
-ggscatter(philly_sub_200k,
-          x = "total_livable_area",
-          y = "sale_price",
-          add = "reg.line") +
-  stat_cor(label.y = 2500000) 
-
 ```
 
 ## Univarite Regression
 
 ### R2 - Coefficient of Determination
-
-Discussed above, the `R^2` or "R-squared" is a common way to validate the predictions of a linear model. Below we run a linear model on our data with the `lm()` function and get the output in our R terminal. At first this is an intimidating amount of information! Here is a [great resource](https://towardsdatascience.com/understanding-linear-regression-output-in-r-7a9cbda948b3) to understand how that output is organized and what it means.  
-
-What we are focusing on here is that `R-squared`,  `Adjusted R-squared` and the `Coefficients`.
-
-What's the `R2` good for as a diagnostic of model quality?
-
-Can somebody interpret the coefficient?
-
-Note: Here we use `ggscatter` with the `..rr.label` argument to show the `R2` Coefficient of Determination.
 
 ```{r simple_reg}
 livingReg <- lm(sale_price ~ total_livable_area, data = philly_sub_200k)
@@ -510,7 +497,7 @@ predict(livingReg, newdata = data.frame(total_livable_area = 4000))
 
 ```{r mutlivariate_regression}
 reg1 <- lm(sale_price ~ ., data = philly_sub_200k %>% 
-                                 dplyr::select(sale_price, total_livable_area, crime_nn3, philly311.Buffer, 
+                                 dplyr::select(sale_price, Age, total_livable_area, crime_nn3, philly311.Buffer, 
                                                fireplaces, interior_condition, number_of_bathrooms, number_of_bedrooms, number_stories))
 
 summary(reg1)
@@ -607,7 +594,6 @@ neighborList.test <- knn2nb(knearneigh(coords.test, 5))
 
 spatialWeights.test <- nb2listw(neighborList.test, style="W")
 
-
 ggplot() +
   geom_point(data = philly.test, aes(x = lagPrice, y = sale_price), size = 2) +
   geom_smooth(data = philly.test, aes(x = lagPrice, y = sale_price), method = "lm", se = F, colour = "#FA7800") +
@@ -652,7 +638,7 @@ ggplot(as.data.frame(moranTest$res[c(1:999)]), aes(moranTest$res[c(1:999)])) +
 philly.test %>%
 as.data.frame() %>%
 # Tract is not a good factor here
-  group_by(census_tract) %>%
+  group_by(zip_code) %>%
     summarize(meanPrediction = mean(sale_price.Predict),
               meanPrice = mean(sale_price)) %>%
       kable() %>% 
@@ -666,7 +652,7 @@ Let's try to run the regression again, but this time with a neighborhood fixed e
 
 ```{r}
 reg.nhood <- lm(sale_price ~ ., data = as.data.frame(philly.training) %>% 
-                                 dplyr::select(census_tract, sale_price,
+                                 dplyr::select(zip_code, sale_price,
                                               total_livable_area, crimes.Buffer))
 
 philly.test.nhood <-
@@ -685,9 +671,9 @@ How do these models compare? We can bind our error info together and then examin
 ```{r}
 bothRegressions <- 
   rbind(
-    dplyr::select(philly.test, starts_with("sale_price"), Regression, census_tract) %>%
+    dplyr::select(philly.test, starts_with("sale_price"), Regression, zip_code) %>%
       mutate(lagPriceError = lag.listw(spatialWeights.test, sale_price.Error)),
-    dplyr::select(philly.test.nhood, starts_with("sale_price"), Regression, census_tract) %>%
+    dplyr::select(philly.test.nhood, starts_with("sale_price"), Regression, zip_code) %>%
       mutate(lagPriceError = lag.listw(spatialWeights.test, sale_price.Error)))  
 
 ```
@@ -696,7 +682,7 @@ Why do these values differ from those in the book?
 
 ```{r}
 st_drop_geometry(bothRegressions) %>%
-  gather(Variable, Value, -Regression, -census_tract) %>%
+  gather(Variable, Value, -Regression, -zip_code) %>%
   filter(Variable == "sale_price.AbsError" | Variable == "sale_price.APE") %>%
   group_by(Regression, Variable) %>%
     summarize(meanValue = mean(Value, na.rm = T)) %>%
@@ -727,20 +713,21 @@ bothRegressions %>%
 We can also examine the spatial pattern of errors.
 
 ```{r}
+
 st_drop_geometry(bothRegressions) %>%
-  group_by(Regression, sale_price) %>%
-  summarize(mean.MAPE = mean(sale_price.APE, na.rm = TRUE), .groups = "drop") %>%
-  ungroup() %>%
-  left_join(philly.test, by = c(#有问题"Name" = "neighborhood")) %>%
-  st_sf() %>%
-  ggplot() + 
-  geom_sf(aes(fill = mean.MAPE)) +
-  geom_sf(data = bothRegressions, colour = "black", size = 0.5) +
-  facet_wrap(~Regression) +
-  scale_fill_gradient(low = palette5[1], high = palette5[5],
-                      name = "MAPE") +
-  labs(title = "Mean test set MAPE by neighborhood") +
-  mapTheme()
+  group_by(Regression, zip_code) %>%
+  summarize(mean.MAPE = mean(sale_price.APE, na.rm = T)) %>%
+  ungroup() %>% 
+  st_join(acsTractsPHL.2020) %>%
+    st_sf() %>%
+    ggplot() + 
+      geom_sf(aes(fill = mean.MAPE)) +
+      geom_sf(data = bothRegressions, colour = "black", size = .1) +
+      facet_wrap(~Regression) +
+      scale_fill_gradient(low = palette5[1], high = palette5[5],
+                          name = "MAPE") +
+      labs(title = "Mean test set MAPE by neighborhood") +
+      mapTheme()
 
 ```
 
@@ -775,11 +762,12 @@ grid.arrange(ncol = 2,
 
 
 ```{r}
-st_join(bothRegressions, tracts17) %>% 
-  filter(!is.na(incomeContext)) %>%
-  group_by(Regression, incomeContext) %>%
-  summarize(mean.MAPE = scales::percent(mean(SalePrice.APE, na.rm = T))) %>%
+
+st_join(bothRegressions, tracts20) %>% 
+  group_by(Regression, raceContext) %>%
+  summarize(mean.MAPE = scales::percent(mean(sale_price.APE, na.rm = T))) %>%
   st_drop_geometry() %>%
-  spread(incomeContext, mean.MAPE) %>%
-  kable(caption = "Test set MAPE by neighborhood income context")
+  spread(raceContext, mean.MAPE) %>%
+  kable(caption = "Test set MAPE by neighborhood racial context")
+
 ```
